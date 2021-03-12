@@ -35,18 +35,13 @@ try:
             agorartc.AUDIO_SCENARIO_GAME_STREAMING
         ) < 0:
         print("[-] Failed to set the high quality audio profile")
-    input_devices, err = RTC.createAudioRecordingDeviceManager()
-    devcount = input_devices.getCount()
-    print(f"there are {devcount} input devices")
-    print(input_devices.getDevice(0, '', ''))
-
-    output_devices, err = RTC.createAudioPlaybackDeviceManager()
-    devcount = output_devices.getCount()
-    print(output_devices.getDevice(0, '', ''))
-    print(f"there are {devcount} output devices")
+    INPUT_DEVICES, err = RTC.createAudioRecordingDeviceManager()
+    OUTPUT_DEVICES, err = RTC.createAudioPlaybackDeviceManager()
 except ImportError as e:
     print("failed to import AgoraRtc", e)
     RTC = None
+    INPUT_DEVICES = None
+    OUTPUT_DEVICES = None
 
 def set_interval(interval):
     """ (int) -> decorator
@@ -190,8 +185,6 @@ class Session:
         self.in_a_room = False
 
     def loop(self):
-        print_channel_list(self.client)
-
         shell_thread = threading.Thread(target=lambda: self.shell())
         shell_thread.daemon = True
         shell_thread.start()
@@ -200,6 +193,9 @@ class Session:
             while True:
                 self.in_a_room = False
                 channel_name = self.room_switcher.get()
+                # helps delay exit until you have cleanly left a room
+                if channel_name is None:
+                    break
                 room = RoomSession(self.client, channel_name, self.room_shell)
                 while True:
                     self.in_a_room = True
@@ -220,28 +216,38 @@ class Session:
             info = devs.getDevice(i, '', '')
             print(f"device[{i}]: {info[1]} = [{info[2]}]")
     def inputs(self):
-        input_devices, err = RTC.createAudioRecordingDeviceManager()
-        devcount = input_devices.getCount()
-        for i in range(0, devcount):
-            info = input_devices.getDevice(i, '', '')
-            print(f"device[{i}]: {info[1]} = [{info[2]}]")
-        print(f"current device: { input_devices.getCurrentDevice('50') }")
+        if INPUT_DEVICES:
+            devcount = INPUT_DEVICES.getCount()
+            for i in range(0, devcount):
+                err, name, device_id = INPUT_DEVICES.getDevice(i, '', '')
+                print(f"device[{i}]: {name} = [{device_id}]")
+            print(f"current device: { INPUT_DEVICES.getCurrentDevice('')[1] }")
     def set_output(self, x):
-        input_devices, err = RTC.createPlaybackDeviceManager()
-        input_devices.setDevice(x)
+        print(f"setting output to [{x}]")
+        if OUTPUT_DEVICES:
+            OUTPUT_DEVICES.setDevice(x)
     def set_input(self, x):
-        input_devices, err = RTC.createAudioRecordingDeviceManager()
-        print(f"setting to [{x}]")
-        input_devices.setDevice(x)
+        print(f"setting input to [{x}]")
+        if INPUT_DEVICES:
+            err, name, dev = INPUT_DEVICES.getDevice(int(x), '', '')
+            if not err:
+                INPUT_DEVICES.setDevice(dev)
 
     def shell(self):
-        print("[*] Type \"leave\" to leave the conversation.")
         while True:
-            inp = input("> ").strip().split()
+            raw = input("> ").strip();
+            inp = raw.split()
             if len(inp) == 0:
                 continue
             ev = None
-            if inp[0] == "leave":
+            if inp[0] == "exit":
+                if self.in_a_room:
+                    self.room_shell.put(UIEvent(UIEventType.Leave, None))
+                # tell room loop to die
+                self.room_switcher.put(None)
+            elif inp[0] == "channels":
+                print_channel_list(self.client, self.max_limit)
+            elif inp[0] == "leave":
                 self.room_shell.put(UIEvent(UIEventType.Leave, None))
             elif inp[0] == "hand-up":
                 self.room_shell.put(UIEvent(UIEventType.RequestSpeaker, None))
@@ -261,6 +267,15 @@ class Session:
                     self.set_input(inp[1])
             elif inp[0] == "update-photo":
                 self.client.update_photo(inp[1])
+            elif inp[0] == "friend-ids":
+                self.friend_ids()
+            elif inp[0] == "accept-friends":
+                if self.in_a_room:
+                    self.room_shell.put(UIEvent(UIEventType.AcceptFriends, None))
+            elif inp[0] == "search-friends":
+                rest = raw[len(inp[0]) + 1:]
+                print(rest)
+                self.search_friends(rest)
             elif inp[0] == "refresh":
                 self.room_shell.put(UIEvent(UIEventType.Refresh, None))
             elif inp[0] == "join":
@@ -273,6 +288,10 @@ class Session:
             else:
                 print("unknown command")
                 continue
+
+    def search_friends(self, search_term):
+        res = self.client.search_users(search_term, following_only=True)
+        print(res)
 
     def _toggle_mute(self):
         """ (str) -> bool
@@ -289,7 +308,7 @@ class Session:
             self.is_mute = not self.is_mute
             result = RTC.muteLocalAudioStream(self.is_mute)
             if result < 0:
-                print("Failed to toggle mute status.")
+                print("[/] Failed to toggle mute status.")
                 return
             if self.is_mute:
                 print("[/] Microphone muted.")
@@ -300,7 +319,7 @@ class Session:
 from dataclasses import dataclass
 from typing import Any
 from enum import Enum
-UIEventType = Enum("UIEventType", ["Leave", "ToggleMute", "RequestSpeaker", "Refresh", "Rejoin"])
+UIEventType = Enum("UIEventType", ["Leave", "ToggleMute", "RequestSpeaker", "Refresh", "Rejoin", "AcceptFriends"])
 @dataclass
 class UIEvent:
     enum: UIEventType
@@ -367,9 +386,31 @@ class RoomSession:
                 self._print_users()
             elif ev.enum == UIEventType.Rejoin:
                 return self.rejoin()
+            elif ev.enum == UIEventType.AcceptFriends:
+                return self.accept_friends()
         self.leave()
         print(f"left room [{self.channel_name}]")
         return None
+
+    def accept_friends(self):
+        self._refresh_info()
+        for user in self.channel_info['users']:
+            if bool(user['is_followed_by_speaker']) and not bool(user['is_invited_as_speaker']):
+                self.client.invite_speaker(self.channel_name, user['user_id'])
+
+    def invite_friend(self, search_term):
+        res = self.client.search_users(search_term, following_only=True)
+        if bool(res['success']):
+            if len(res['users']) == 1:
+                user_id = res['users'][0]['user_id']
+                self.client.invite_speaker(self.channel_name, user_id)
+
+    def present_users(self):
+        return [user['user_id'] for user in self.channel_info['users']]
+
+    def make_mod(self, user_id):
+        if user_id in self.present_users():
+            self.client.make_moderator(self.channel_name, user_id)
 
     def join(self) -> bool:
         self.channel_info = self.client.join_channel(self.channel_name)
