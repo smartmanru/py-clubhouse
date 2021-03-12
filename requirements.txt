@@ -1,5 +1,3 @@
 pynput
 requests
 rich
-goless
-pubnub

@@ -6,17 +6,12 @@ Sample CLI Clubhouse Client
 RTC: For voice communication
 """
 
-# print("hi")
-# import pdb; pdb.set_trace()
-
-# import keyboard
 import os
 import sys
 import threading
 import selectors
 import configparser
 import readline
-from pynput import keyboard
 from rich.table import Table
 from rich.console import Console
 from clubhouse.clubhouse import Clubhouse
@@ -516,44 +511,6 @@ def chat_main(client):
     # import pdb; pdb.set_trace()
     session = Session(client)
     session.loop()
-
-    while False:
-        # Choose which channel to enter.
-        # Join the talk on success.
-        user_id = client.HEADERS.get("CH-UserID")
-        print_channel_list(client, max_limit)
-        channel_name = input("[.] Enter channel_name: ")
-
-        # List currently available users (TOP 20 only.)
-        # Also, check for the current user's speaker permission.
-        channel_speaker_permission = False
-        console = Console()
-        table = Table(show_header=True, header_style="bold magenta")
-
-        # Add raise_hands key bindings for speaker permission
-        # Sorry for the bad quality
-        _listener = None
-        req_spkr_perm = lambda _k: room._request_speaker_permission()
-        mute_self = lambda _k: session._toggle_mute()
-        hotkey_map = {
-            '<ctrl>+<shift>+h': req_spkr_perm,
-            '<ctrl>+<shift>+m': mute_self
-        }
-        if not channel_speaker_permission:
-
-            if sys.platform == "darwin": # OSX
-                _hotkey = "ctrl+shift+h"
-            elif sys.platform == "win32": # Windows
-                _hotkey = "ctrl+shift+h"
-
-            print(f"[*] Press [h] to raise your hands for the speaker permission.")
-            print(f"[*] Press [m] to mute your voice.")
-
-            _listener = keyboard.GlobalHotKeys(hotkey_map)
-            _listener.start()
-
-        input("[*] Press [Enter] to quit conversation.\n")
-        leave()
 
 def user_authentication(client):
     """ (Clubhouse) -> NoneType
