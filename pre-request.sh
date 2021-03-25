@@ -5,4 +5,4 @@ git clone https://github.com/smartmanru/py-clubhouse ~/py-club
 cd ~/py-club
 python3 -m pip install -r requirements.txt
 python3 -m pip install agora agora-python-sdk
-python3 v2.py
+python3 ~/py-club/v2.py
